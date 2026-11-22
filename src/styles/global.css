@@ -172,3 +172,59 @@ form input:focus,form textarea:focus{border-color:var(--a)}
 @media(max-width:760px){.links{display:none}.nav .ic{margin-left:auto}.stage{height:auto}.scene{height:auto;display:flex;flex-wrap:wrap;gap:8px;justify-content:center;transform:none!important}.scene::before,.layer,.orb,.beam,.floor{display:none}.scene>.shield{flex-basis:100%;width:100%;height:160px;max-width:100%;animation:none}.fc{position:static;transform:none;animation:none}
 .cmd{flex-direction:column;align-items:stretch}.seg{justify-content:center}.cmd input{text-align:center}.bento{grid-template-columns:1fr}.t1,.t2,.t3,.t4{grid-column:auto;grid-row:auto}.t4{grid-template-columns:1fr 1fr}.res{grid-template-columns:1fr;justify-items:start}.fgrid{grid-template-columns:1fr}.lr{grid-template-columns:30px 1fr auto}.lr .nt,.lr .tm{display:none}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}.reveal{opacity:1;translate:none;filter:none}.ln{stroke-dashoffset:0}.nd{opacity:1}}
+
+
+/* ── Proof image upload & OCR ─────────────────────────────────────────────── */
+.proof-upload-wrap{display:flex;flex-direction:column;gap:8px;margin-bottom:4px}
+.proof-upload-label{font-size:13px;font-weight:600;color:var(--mut)}
+.proof-dropzone{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;border:2px dashed var(--line);border-radius:16px;padding:28px 20px;cursor:pointer;text-align:center;font-size:14px;font-weight:500;color:var(--mut);transition:border-color .2s,background .2s}
+.proof-dropzone:hover{border-color:var(--a);background:color-mix(in srgb,var(--a) 6%,transparent)}
+.proof-dropzone-icon{font-size:28px;line-height:1}
+.proof-dropzone-hint{font-size:12px;opacity:.7}
+.proof-preview-wrap{display:flex;flex-direction:column;gap:10px}
+.proof-preview-img-wrap{position:relative;border-radius:14px;overflow:hidden;border:1px solid var(--line);max-height:220px;background:#000}
+.proof-preview-img{width:100%;max-height:220px;object-fit:contain;display:block}
+.proof-remove-btn{position:absolute;top:8px;right:8px;background:rgba(0,0,0,.55);color:#fff;border:0;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:background .2s}
+.proof-remove-btn:hover{background:var(--red)}
+/* OCR status */
+.ocr-status{font-size:13px;font-weight:500;padding:9px 14px;border-radius:10px;display:flex;align-items:center;gap:8px}
+.ocr-status.uploading{background:color-mix(in srgb,var(--a) 10%,transparent);color:var(--a)}
+.ocr-status.error{background:color-mix(in srgb,var(--red) 10%,transparent);color:var(--red)}
+.ocr-status.empty{background:color-mix(in srgb,var(--grn) 10%,transparent);color:var(--grn)}
+.ocr-spinner{width:14px;height:14px;border-radius:50%;border:2px solid currentColor;border-right-color:transparent;animation:spin .7s linear infinite;flex-shrink:0}
+@keyframes spin{to{transform:rotate(360deg)}}
+/* OCR results panel */
+.ocr-results{border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:var(--glass);backdrop-filter:blur(10px);display:flex;flex-direction:column;gap:8px}
+.ocr-results-title{font-size:12.5px;font-weight:700;color:var(--mut);margin:0}
+.ocr-group{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.ocr-group-label{font-size:11.5px;font-weight:700;color:var(--mut);text-transform:uppercase;letter-spacing:.06em;width:100%;margin-bottom:2px}
+/* Clickable OCR chips */
+.ocr-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--line);background:var(--glass2);border-radius:999px;padding:5px 11px;font-size:12.5px;font-weight:600;cursor:pointer;transition:border-color .2s,background .2s}
+.ocr-chip:hover{border-color:var(--a);background:color-mix(in srgb,var(--a) 10%,transparent)}
+.ocr-chip-label{font-size:14px}
+.ocr-chip-val{color:var(--ink)}
+.ocr-chip-hint{font-size:11px;color:var(--mut);font-weight:400}
+/* Amount chips (non-clickable) */
+.amount-chip{border:1px solid color-mix(in srgb,var(--grn) 40%,transparent);background:color-mix(in srgb,var(--grn) 10%,transparent);color:var(--grn);font-weight:700;font-size:13px;padding:5px 13px;border-radius:999px}
+
+
+/* ── ResultCard OCR Evidence Panel ────────────────────────────────────────── */
+.evidence-panel{margin:10px 0 14px;border:1px solid var(--line);border-radius:14px;padding:12px;background:var(--glass2)}
+.evidence-items{display:flex;flex-direction:column;gap:8px}
+.evidence-item{display:flex;align-items:center;gap:12px;border:1px solid var(--line);border-radius:10px;padding:8px 10px;background:var(--glass)}
+.evidence-thumb{width:52px;height:52px;border-radius:8px;object-fit:cover;border:1px solid var(--line);display:block;transition:transform .2s}
+.evidence-thumb:hover{transform:scale(1.05)}
+.evidence-details{display:flex;flex-direction:column;gap:4px;flex:1}
+.evidence-note{font-size:12px;color:var(--mut);font-style:italic}
+
+
+/* ── Verified Seller Management & Badges ───────────────────────────────────── */
+.verify-seller-form{margin-top:16px;border:1px solid var(--line);border-radius:18px;padding:20px;background:var(--glass2);backdrop-filter:blur(14px);box-shadow:var(--sh);animation:rise .4s ease}
+.vs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.vs-grid label{display:flex;flex-direction:column;gap:6px;font-size:13px;font-weight:600;color:var(--mut)}
+.vs-grid input{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--bg);color:var(--ink);outline:0;font-size:14px;transition:border-color .2s}
+.vs-grid input:focus{border-color:var(--grn);box-shadow:0 0 0 3px color-mix(in srgb,var(--grn) 20%,transparent)}
+.v-seller-btn{display:inline-flex;align-items:center;gap:10px;border:1px solid color-mix(in srgb,var(--grn) 35%,transparent);background:color-mix(in srgb,var(--grn) 8%,transparent);border-radius:999px;padding:8px 16px;font-weight:700;cursor:pointer;transition:transform .2s,border-color .2s}
+.v-seller-btn:hover{transform:translateY(-1px);border-color:var(--grn)}
+.v-seller-name{color:var(--ink);font-size:14px}
+.v-seller-score{font-size:12px;font-weight:700;color:var(--grn);background:color-mix(in srgb,var(--grn) 16%,transparent);padding:2px 8px;border-radius:999px}

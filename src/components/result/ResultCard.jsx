@@ -58,7 +58,40 @@ export default function ResultCard({ k, a, onReport, onAgain, onPick }) {
           </>
         )}
 
-        <p style={{ margin: '0 0 16px' }}><b>{VERDICT[a.lv][1]}</b></p>
+        {a.reps.some((r) => r.extractedData || r.proofImage) && (
+          <div className="evidence-panel">
+            <b style={{ fontSize: 13, display: 'block', margin: '14px 0 8px' }}>
+              🔍 OCR Genuine Evidence ({a.reps.filter((r) => r.extractedData || r.proofImage).length})
+            </b>
+            <div className="evidence-items">
+              {a.reps
+                .filter((r) => r.extractedData || r.proofImage)
+                .map((r, idx) => (
+                  <div key={idx} className="evidence-item">
+                    {r.proofImage && (
+                      <a href={r.proofImage} target="_blank" rel="noreferrer" title="Click to view full proof">
+                        <img src={r.proofImage} alt="Payment receipt" className="evidence-thumb" />
+                      </a>
+                    )}
+                    <div className="evidence-details">
+                      {r.extractedData?.amounts?.length > 0 && (
+                        <span className="tag grn">Amount: {r.extractedData.amounts.join(', ')}</span>
+                      )}
+                      {r.extractedData?.upiIds?.length > 0 && (
+                        <span className="tag">UPI: {r.extractedData.upiIds.join(', ')}</span>
+                      )}
+                      {r.extractedData?.phones?.length > 0 && (
+                        <span className="tag">Phone: {r.extractedData.phones.join(', ')}</span>
+                      )}
+                      {r.note && <div className="evidence-note">"{r.note}"</div>}
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+
+        <p style={{ margin: '14px 0 16px' }}><b>{VERDICT[a.lv][1]}</b></p>
         <button className="btn ghost" onClick={onReport}>Report this seller</button>
         <button className="btn ghost" onClick={onAgain}>Check another</button>
         <p className="note">The score comes from fixed rules over community reports and shared payment IDs. It is not a prediction.</p>

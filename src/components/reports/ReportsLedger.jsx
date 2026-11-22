@@ -16,10 +16,25 @@ export default function ReportsLedger({ db, onPick }) {
             <div className="lr" key={r.id + r.ts + idx}>
               <span>{icon(r.id)}</span>
               <span className="id" onClick={() => onPick(plain(r.id))}>{label(r.id)}</span>
-              <span><span className={`tag ${r.proof ? 'red' : 'amber'}`}>{r.proof ? 'Reported' : 'Under review'}</span></span>
+              <span>
+                <span className={`tag ${r.proof ? 'red' : 'amber'}`}>
+                  {r.proof ? 'Reported' : 'Under review'}
+                </span>
+                {r.extractedData && (
+                  <span className="tag grn" style={{ marginLeft: 6 }} title="OCR verified receipt data">
+                    OCR ✓
+                  </span>
+                )}
+              </span>
               <span className="nt">
                 {r.note || 'No details given.'}
+                {r.extractedData?.amounts?.length ? ` · Amount: ${r.extractedData.amounts[0]}` : ''}
                 {l ? ' · Linked to ' + l + ' other page' + (l > 1 ? 's' : '') : ''}
+                {r.proofImage && (
+                  <a href={r.proofImage} target="_blank" rel="noreferrer" style={{ marginLeft: 8, textDecoration: 'underline', color: 'var(--a)' }}>
+                    [Proof]
+                  </a>
+                )}
               </span>
               <span className="tm">{ago(r.ts)}</span>
             </div>

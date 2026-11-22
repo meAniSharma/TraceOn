@@ -16,7 +16,7 @@ import ReportSection from '../components/report/ReportSection.jsx';
 import CallToAction from '../components/cta/CallToAction.jsx';
 
 export default function HomePage() {
-  const { db, addReport } = useDb();
+  const { db, addReport, verifySeller } = useDb();
   const { showToast } = useToast();
   const { tracing, pill, result, flipKey, check, reset } = useSellerCheck({ db, showToast });
 
@@ -62,6 +62,18 @@ export default function HomePage() {
     lookup(plain(ids[0]), next);
   };
 
+  const handleVerifySeller = async (details) => {
+    const res = await verifySeller(details);
+    if (res.ok) {
+      showToast(`Seller "${details.name || 'Store'}" verified with Green rating (71–100)!`);
+      if (res.primaryId) {
+        lookup(plain(res.primaryId), res.db);
+      }
+    } else {
+      showToast(res.error || 'Failed to verify seller');
+    }
+  };
+
   const k = result?.k;
   return (
     <>
@@ -103,7 +115,7 @@ export default function HomePage() {
       <Marquee />
       <HowItWorks db={db} onPick={lookup} />
       <ReportsLedger db={db} onPick={lookup} />
-      <VerifiedSellers db={db} onPick={lookup} />
+      <VerifiedSellers db={db} onPick={lookup} onVerifySeller={handleVerifySeller} />
       <ReportSection prefill={prefill} onSubmit={handleReportSubmit} showToast={showToast} />
       <CallToAction />
     </>

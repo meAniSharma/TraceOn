@@ -1,11 +1,11 @@
 import Reveal from '../common/Reveal.jsx';
 
 const RULES = [
-  ['Report with proof', '+25 each, max 50'],
-  ['Report without proof', '+10 each, max 20'],
-  ['Payment ID on 2+ other pages', '+30'],
-  ['Reported in last 7 days', '+10'],
-  ['Verified seller', '−40'],
+  ['Score 71–100 (Green)', 'Safe & Verified seller'],
+  ['Score 41–70 (Yellow)', 'Proceed with caution'],
+  ['Score 0–40 (Red)', 'High risk scam alert'],
+  ['Verified seller bonus', '+15 Trust boost'],
+  ['OCR proof report', '−25 Trust penalty'],
 ];
 
 export default function ScoreRulesTile() {
