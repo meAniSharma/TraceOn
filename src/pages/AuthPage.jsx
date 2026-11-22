@@ -42,7 +42,7 @@ export default function AuthPage({ mode }) {
             ? <>New to TraceOn? <Link to="/signup">Create an account</Link></>
             : <>Already have an account? <Link to="/login">Log in</Link></>}
         </p>
-        <p className="auth-demo">Demo build: accounts are saved in this browser only.</p>
+        <p className="auth-demo">Your account is securely stored on the server.</p>
       </section>
     </main>
   );

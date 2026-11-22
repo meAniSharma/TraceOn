@@ -1,29 +1,20 @@
 /*
- * DEMO AUTH — front-end only.
- * Accounts live in this browser's localStorage and passwords are stored as a salted SHA-256 hash.
- * That is fine for a prototype, but NOT secure authentication. Before going live, replace the
- * three functions below (signUp, logIn, logOut) with calls to a real backend / auth provider.
+ * TraceOn Auth – backed by the Express API.
+ * Falls back to a "server unreachable" error if the API is down.
  */
-const USERS = 'traceon.users';
-const SESSION = 'traceon.session';
 
-const read = (key, fallback) => {
-  try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; }
-};
-const write = (key, value) => {
-  try { localStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
-};
+// In dev, Vite proxies /api → http://localhost:3001, so we use '' (relative).
+// In production set VITE_API_URL to your server's origin.
+const BASE = import.meta.env.VITE_API_URL ?? '';
 
-const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+const TOKEN_KEY = 'traceon.token';
+const SESSION_KEY = 'traceon.session';
 
-async function hashPassword(password, salt) {
-  if (!globalThis.crypto?.subtle) throw new Error('Secure context required');
-  const data = new TextEncoder().encode(salt + ':' + password);
-  return hex(await crypto.subtle.digest('SHA-256', data));
-}
-const newSalt = () => hex(crypto.getRandomValues(new Uint8Array(16)));
+const readLocal = (k, fb) => { try { return JSON.parse(localStorage.getItem(k)) ?? fb; } catch { return fb; } };
+const writeLocal = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
+const removeLocal = (k) => { try { localStorage.removeItem(k); } catch {} };
 
-/* ---------- validation helpers ---------- */
+/* ---------- helpers ---------- */
 export const isEmail = (v) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(v.trim());
 export const firstName = (name = '') => name.trim().split(/\s+/)[0] || 'there';
 
@@ -38,39 +29,44 @@ export function passwordStrength(p) {
 export const STRENGTH_LABEL = ['', 'Weak', 'Fair', 'Good', 'Strong'];
 
 /* ---------- session ---------- */
-export const getSession = () => read(SESSION, null);
+export const getSession = () => readLocal(SESSION_KEY, null);
 
-/* ---------- API-shaped functions (swap these for a backend) ---------- */
-export async function signUp({ name, email, password }) {
+function saveSession(user, token) {
+  writeLocal(SESSION_KEY, user);
+  writeLocal(TOKEN_KEY, token);
+}
+
+export function getToken() {
+  return readLocal(TOKEN_KEY, null);
+}
+
+/* ---------- API calls ---------- */
+async function callApi(path, body) {
   try {
-    const users = read(USERS, []);
-    const e = email.trim().toLowerCase();
-    if (users.some((u) => u.email === e)) return { ok: false, error: 'An account with this email already exists. Try logging in.' };
-    const salt = newSalt();
-    const user = { id: crypto.randomUUID?.() ?? salt, name: name.trim(), email: e, salt, hash: await hashPassword(password, salt), createdAt: Date.now() };
-    if (!write(USERS, [...users, user])) return { ok: false, error: 'Your browser blocked storage, so the account couldn’t be saved.' };
-    const session = { id: user.id, name: user.name, email: user.email };
-    write(SESSION, session);
-    return { ok: true, user: session };
+    const res = await fetch(BASE + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return await res.json();
   } catch {
-    return { ok: false, error: 'Account creation needs a secure (https or localhost) connection.' };
+    return { ok: false, error: 'Cannot reach the server. Make sure the backend is running.' };
   }
+}
+
+export async function signUp({ name, email, password }) {
+  const r = await callApi('/api/auth/signup', { name, email, password });
+  if (r.ok) saveSession(r.user, r.token);
+  return r;
 }
 
 export async function logIn({ email, password }) {
-  try {
-    const u = read(USERS, []).find((x) => x.email === email.trim().toLowerCase());
-    const bad = { ok: false, error: 'Incorrect email or password.' };
-    if (!u) return bad;
-    if ((await hashPassword(password, u.salt)) !== u.hash) return bad;
-    const session = { id: u.id, name: u.name, email: u.email };
-    write(SESSION, session);
-    return { ok: true, user: session };
-  } catch {
-    return { ok: false, error: 'Logging in needs a secure (https or localhost) connection.' };
-  }
+  const r = await callApi('/api/auth/login', { email, password });
+  if (r.ok) saveSession(r.user, r.token);
+  return r;
 }
 
 export function logOut() {
-  try { localStorage.removeItem(SESSION); } catch { /* ignore */ }
+  removeLocal(SESSION_KEY);
+  removeLocal(TOKEN_KEY);
 }

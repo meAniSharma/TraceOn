@@ -56,9 +56,9 @@ export default function HomePage() {
     if (!v && result) reset();
   };
 
-  const handleReportSubmit = (ids, details) => {
-    const next = addReport(ids, details);
+  const handleReportSubmit = async (ids, details) => {
     showToast('Report submitted. Thank you.');
+    const next = await addReport(ids, details);
     lookup(plain(ids[0]), next);
   };
 
