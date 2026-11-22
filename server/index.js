@@ -17,10 +17,11 @@ const multer = require('multer');
 const { DatabaseSync } = require('node:sqlite');
 const { createWorker } = require('tesseract.js');
 
+const isVercel = Boolean(process.env.VERCEL);
 const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'traceon-dev-secret-change-in-prod';
-const DB_PATH = path.join(__dirname, 'traceon.db');
-const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const DB_PATH = isVercel ? path.join('/tmp', 'traceon.db') : path.join(__dirname, 'traceon.db');
+const UPLOADS_DIR = isVercel ? path.join('/tmp', 'uploads') : path.join(__dirname, 'uploads');
 
 // Ensure uploads directory exists
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -395,6 +396,10 @@ if (fs.existsSync(distPath)) {
   app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
 }
 
-// ─── Start ────────────────────────────────────────────────────────────────────
+// ─── Start / Export ──────────────────────────────────────────────────────────
 seedIfEmpty();
-app.listen(PORT, () => console.log(`TraceOn API ➜ http://localhost:${PORT}`));
+if (!isVercel) {
+  app.listen(PORT, () => console.log(`TraceOn API ➜ http://localhost:${PORT}`));
+}
+
+module.exports = app;
