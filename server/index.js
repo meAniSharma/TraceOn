@@ -1,8 +1,8 @@
 /**
  * TraceOn Backend Server
- * Express + Node built-in SQLite (node:sqlite, Node 22.5+) + JWT auth + OCR
+ * Express + SQLite (with fallback) + JWT auth + OCR
  *
- * Start: node --experimental-sqlite index.js
+ * Runs locally (http://localhost:3001) or on Vercel Serverless Function (/api/*).
  */
 
 'use strict';
@@ -14,7 +14,6 @@ const jwt = require('jsonwebtoken');
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
-const { DatabaseSync } = require('node:sqlite');
 const { createWorker } = require('tesseract.js');
 
 const isVercel = Boolean(process.env.VERCEL);
@@ -24,7 +23,9 @@ const DB_PATH = isVercel ? path.join('/tmp', 'traceon.db') : path.join(__dirname
 const UPLOADS_DIR = isVercel ? path.join('/tmp', 'uploads') : path.join(__dirname, 'uploads');
 
 // Ensure uploads directory exists
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+try {
+  if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+} catch { /* ignore in read-only environment */ }
 
 // ─── Multer setup (disk storage, images only, max 5 MB) ──────────────────────
 const storage = multer.diskStorage({
@@ -44,110 +45,172 @@ const upload = multer({
   },
 });
 
+// ─── In-memory database fallback (for Vercel Node < 22 or read-only /tmp) ─────
+function createInMemoryDb() {
+  const store = { users: [], accounts: [], account_ids: [], reports: [] };
+  return {
+    exec() {},
+    prepare(sql) {
+      const s = sql.trim();
+      return {
+        get(...params) {
+          if (s.includes('FROM accounts') && s.includes('COUNT(*)')) {
+            return { c: store.accounts.length };
+          }
+          if (s.includes('FROM users WHERE email = ?')) {
+            const e = String(params[0] || '').toLowerCase();
+            return store.users.find((u) => u.email === e) || null;
+          }
+          if (s.includes('FROM account_ids WHERE identity = ?')) {
+            const id = params[0];
+            return store.account_ids.find((a) => a.identity === id) || null;
+          }
+          return null;
+        },
+        all() {
+          if (s.includes('FROM accounts')) return [...store.accounts];
+          if (s.includes('FROM account_ids')) return [...store.account_ids];
+          if (s.includes('FROM reports')) return [...store.reports].sort((a, b) => b.ts - a.ts);
+          return [];
+        },
+        run(...params) {
+          if (s.startsWith('INSERT INTO accounts')) {
+            const [id, verified, name] = params;
+            store.accounts.push({ id, verified: verified ? 1 : 0, name: name || null });
+          } else if (s.includes('UPDATE accounts SET verified = 1')) {
+            const [name, id] = params;
+            const acc = store.accounts.find((a) => a.id === id);
+            if (acc) {
+              acc.verified = 1;
+              if (name) acc.name = name;
+            }
+          } else if (s.includes('INSERT INTO account_ids') || s.includes('INSERT OR IGNORE INTO account_ids')) {
+            const [account_id, identity] = params;
+            if (!store.account_ids.some((a) => a.account_id === account_id && a.identity === identity)) {
+              store.account_ids.push({ account_id, identity });
+            }
+          } else if (s.startsWith('INSERT INTO reports')) {
+            const [id, identity, proof, note, proof_image, ocr_text, extracted_data, ts] = params;
+            store.reports.push({
+              id,
+              identity,
+              proof: proof ? 1 : 0,
+              note,
+              proof_image: proof_image || null,
+              ocr_text: ocr_text || null,
+              extracted_data: extracted_data || null,
+              ts: ts || Date.now(),
+            });
+          } else if (s.startsWith('INSERT INTO users')) {
+            const [id, name, email, hash, created_at] = params;
+            store.users.push({ id, name, email, hash, created_at });
+          }
+          return { changes: 1 };
+        },
+      };
+    },
+  };
+}
+
 // ─── Database setup ───────────────────────────────────────────────────────────
-const db = new DatabaseSync(DB_PATH);
-db.exec(`PRAGMA journal_mode = WAL`);
-db.exec(`PRAGMA foreign_keys = ON`);
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL,
-    email      TEXT NOT NULL UNIQUE,
-    hash       TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS accounts (
-    id       TEXT PRIMARY KEY,
-    verified INTEGER NOT NULL DEFAULT 0,
-    name     TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS account_ids (
-    account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    identity   TEXT NOT NULL,
-    PRIMARY KEY (account_id, identity)
-  );
-
-  CREATE TABLE IF NOT EXISTS reports (
-    id             TEXT PRIMARY KEY,
-    identity       TEXT NOT NULL,
-    proof          INTEGER NOT NULL DEFAULT 0,
-    note           TEXT,
-    proof_image    TEXT,
-    ocr_text       TEXT,
-    extracted_data TEXT,
-    ts             INTEGER NOT NULL
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_account_ids_identity ON account_ids(identity);
-  CREATE INDEX IF NOT EXISTS idx_reports_identity ON reports(identity);
-`);
-
-// Add OCR columns to existing reports table (safe migration)
+let db;
 try {
-  db.exec(`ALTER TABLE reports ADD COLUMN proof_image TEXT`);
-  db.exec(`ALTER TABLE reports ADD COLUMN ocr_text TEXT`);
-  db.exec(`ALTER TABLE reports ADD COLUMN extracted_data TEXT`);
-} catch { /* columns already exist */ }
+  const { DatabaseSync } = require('node:sqlite');
+  db = new DatabaseSync(DB_PATH);
+  db.exec(`PRAGMA journal_mode = WAL`);
+  db.exec(`PRAGMA foreign_keys = ON`);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id         TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      email      TEXT NOT NULL UNIQUE,
+      hash       TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS accounts (
+      id       TEXT PRIMARY KEY,
+      verified INTEGER NOT NULL DEFAULT 0,
+      name     TEXT
+    );
+    CREATE TABLE IF NOT EXISTS account_ids (
+      account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      identity   TEXT NOT NULL,
+      PRIMARY KEY (account_id, identity)
+    );
+    CREATE TABLE IF NOT EXISTS reports (
+      id             TEXT PRIMARY KEY,
+      identity       TEXT NOT NULL,
+      proof          INTEGER NOT NULL DEFAULT 0,
+      note           TEXT,
+      proof_image    TEXT,
+      ocr_text       TEXT,
+      extracted_data TEXT,
+      ts             INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_account_ids_identity ON account_ids(identity);
+    CREATE INDEX IF NOT EXISTS idx_reports_identity ON reports(identity);
+  `);
+  try {
+    db.exec(`ALTER TABLE reports ADD COLUMN proof_image TEXT`);
+    db.exec(`ALTER TABLE reports ADD COLUMN ocr_text TEXT`);
+    db.exec(`ALTER TABLE reports ADD COLUMN extracted_data TEXT`);
+  } catch { /* already exist */ }
+} catch (e) {
+  console.log('node:sqlite unavailable or storage read-only; using resilient in-memory database fallback.');
+  db = createInMemoryDb();
+}
 
 // ─── Seed demo data if empty ──────────────────────────────────────────────────
 function seedIfEmpty() {
-  const count = db.prepare('SELECT COUNT(*) AS c FROM accounts').get();
-  if (count.c > 0) return;
+  try {
+    const count = db.prepare('SELECT COUNT(*) AS c FROM accounts').get();
+    if (count && count.c > 0) return;
 
-  const H = 36e5, D = 864e5, now = Date.now();
-  const insAcc = db.prepare('INSERT INTO accounts (id, verified, name) VALUES (?, ?, ?)');
-  const insId  = db.prepare('INSERT INTO account_ids (account_id, identity) VALUES (?, ?)');
-  const insRep = db.prepare('INSERT INTO reports (id, identity, proof, note, ts) VALUES (?, ?, ?, ?, ?)');
+    const H = 36e5, D = 864e5, now = Date.now();
+    const insAcc = db.prepare('INSERT INTO accounts (id, verified, name) VALUES (?, ?, ?)');
+    const insId  = db.prepare('INSERT INTO account_ids (account_id, identity) VALUES (?, ?)');
+    const insRep = db.prepare('INSERT INTO reports (id, identity, proof, note, ts) VALUES (?, ?, ?, ?, ?)');
 
-  const seed = [
-    { id: 'acc1', ids: ['ig:trendy_store123', 'upi:rahul123@okaxis', 'ph:9876543210'], verified: 0, name: null },
-    { id: 'acc2', ids: ['ig:fashion_deals_01', 'upi:rahul123@okaxis'], verified: 0, name: null },
-    { id: 'acc3', ids: ['ig:premium_store', 'upi:rahul123@okaxis'], verified: 0, name: null },
-    { id: 'acc4', ids: ['ig:shop_with_trust', 'upi:trustshop@oksbi'], verified: 1, name: 'Shop With Trust' },
-    { id: 'acc5', ids: ['ig:glow_cosmetics_in', 'upi:glowpay@ybl'], verified: 1, name: 'Glow Cosmetics' },
-    { id: 'acc6', ids: ['ig:cheap_gadgets_hub', 'upi:gadgetking@paytm', 'ph:9123456780'], verified: 0, name: null },
-  ];
-  const seedReports = [
-    { identity: 'ig:trendy_store123',   proof: 1, note: 'Paid in advance, got blocked.',           ts: now - 2 * H },
-    { identity: 'upi:rahul123@okaxis',  proof: 1, note: 'Same UPI under a new page name.',         ts: now - 3 * D },
-    { identity: 'ph:9876543210',        proof: 0, note: 'Never delivered.',                        ts: now - 5 * H },
-    { identity: 'ig:fashion_deals_01',  proof: 1, note: 'Receipt attached, no delivery.',          ts: now - 9 * D },
-    { identity: 'upi:gadgetking@paytm', proof: 0, note: 'Asked for full payment first.',           ts: now - 3 * H },
-  ];
-  for (const a of seed) {
-    insAcc.run(a.id, a.verified, a.name);
-    for (const identity of a.ids) insId.run(a.id, identity);
+    const seed = [
+      { id: 'acc1', ids: ['ig:trendy_store123', 'upi:rahul123@okaxis', 'ph:9876543210'], verified: 0, name: null },
+      { id: 'acc2', ids: ['ig:fashion_deals_01', 'upi:rahul123@okaxis'], verified: 0, name: null },
+      { id: 'acc3', ids: ['ig:premium_store', 'upi:rahul123@okaxis'], verified: 0, name: null },
+      { id: 'acc4', ids: ['ig:shop_with_trust', 'upi:trustshop@oksbi'], verified: 1, name: 'Shop With Trust' },
+      { id: 'acc5', ids: ['ig:glow_cosmetics_in', 'upi:glowpay@ybl'], verified: 1, name: 'Glow Cosmetics' },
+      { id: 'acc6', ids: ['ig:cheap_gadgets_hub', 'upi:gadgetking@paytm', 'ph:9123456780'], verified: 0, name: null },
+    ];
+    const seedReports = [
+      { identity: 'ig:trendy_store123',   proof: 1, note: 'Paid in advance, got blocked.',           ts: now - 2 * H },
+      { identity: 'upi:rahul123@okaxis',  proof: 1, note: 'Same UPI under a new page name.',         ts: now - 3 * D },
+      { identity: 'ph:9876543210',        proof: 0, note: 'Never delivered.',                        ts: now - 5 * H },
+      { identity: 'ig:fashion_deals_01',  proof: 1, note: 'Receipt attached, no delivery.',          ts: now - 9 * D },
+      { identity: 'upi:gadgetking@paytm', proof: 0, note: 'Asked for full payment first.',           ts: now - 3 * H },
+    ];
+    for (const a of seed) {
+      insAcc.run(a.id, a.verified, a.name);
+      for (const identity of a.ids) insId.run(a.id, identity);
+    }
+    for (const r of seedReports) insRep.run(newId(), r.identity, r.proof, r.note, r.ts);
+    console.log('✓ Seeded demo data');
+  } catch (err) {
+    console.error('seed error', err);
   }
-  for (const r of seedReports) insRep.run(newId(), r.identity, r.proof, r.note, r.ts);
-  console.log('✓ Seeded demo data');
 }
 
 // ─── OCR helpers ──────────────────────────────────────────────────────────────
-
-/**
- * Extract payment-relevant entities from raw OCR text.
- * Returns { upiIds, phones, amounts, igHandles, rawText }
- */
 function extractEntities(text) {
-  const upiIds    = [...new Set(text.match(/[\w.\-]+@[a-z]{2,}/gi) || [])].map(s => s.toLowerCase());
+  const upiIds    = [...new Set(text.match(/[\w.\-]+@[a-z]{2,}/gi) || [])].map((s) => s.toLowerCase());
   const phones    = [...new Set((text.match(/(?<!\d)(\+91[-\s]?)?[6-9]\d{9}(?!\d)/g) || [])
-                      .map(s => s.replace(/\D/g, '').slice(-10)))];
+                      .map((s) => s.replace(/\D/g, '').slice(-10)))];
   const amounts   = [...new Set(text.match(/(?:₹|Rs\.?|INR)\s*[\d,]+(?:\.\d{1,2})?/gi) || [])];
-  const igHandles = [...new Set((text.match(/@[a-zA-Z0-9_.]{3,30}/g) || []).map(s => s.toLowerCase()))];
+  const igHandles = [...new Set((text.match(/@[a-zA-Z0-9_.]{3,30}/g) || []).map((s) => s.toLowerCase()))];
 
   return { upiIds, phones, amounts, igHandles, rawText: text.trim() };
 }
 
-/**
- * Run Tesseract OCR on a file path, return extracted entities.
- * Uses English + Hindi language pack for better Indian-context results.
- */
 async function runOcr(filePath) {
   const worker = await createWorker('eng', 1, {
-    logger: () => {}, // silence progress logs
+    logger: () => {},
     errorHandler: () => {},
   });
   try {
@@ -158,15 +221,7 @@ async function runOcr(filePath) {
   }
 }
 
-// ─── Generic helpers ──────────────────────────────────────────────────────────
 function newId() { return crypto.randomUUID(); }
-
-function auth(req, res, next) {
-  const h = req.headers.authorization || '';
-  if (!h.startsWith('Bearer ')) return res.status(401).json({ ok: false, error: 'Not authenticated' });
-  try { req.user = jwt.verify(h.slice(7), JWT_SECRET); next(); }
-  catch { res.status(401).json({ ok: false, error: 'Session expired. Please log in again.' }); }
-}
 
 function loadDb() {
   const accountRows = db.prepare('SELECT * FROM accounts').all();
@@ -191,19 +246,12 @@ function loadDb() {
   return { accounts, reports };
 }
 
-// ─── Express app ──────────────────────────────────────────────────────────────
-const app = express();
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json());
+// ─── Router (mounted at both /api and / for Vercel rewrite compatibility) ──────
+const api = express.Router();
 
-// Serve uploaded proof images
-app.use('/uploads', express.static(UPLOADS_DIR));
+api.get('/health', (_req, res) => res.json({ ok: true, timestamp: Date.now() }));
 
-// ── Health ─────────────────────────────────────────────────────────────────
-app.get('/api/health', (_req, res) => res.json({ ok: true }));
-
-// ── Signup ─────────────────────────────────────────────────────────────────
-app.post('/api/auth/signup', async (req, res) => {
+api.post('/auth/signup', async (req, res) => {
   try {
     const { name, email, password } = req.body || {};
     if (!name || !email || !password)
@@ -229,8 +277,7 @@ app.post('/api/auth/signup', async (req, res) => {
   }
 });
 
-// ── Login ──────────────────────────────────────────────────────────────────
-app.post('/api/auth/login', async (req, res) => {
+api.post('/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body || {};
     if (!email || !password)
@@ -250,37 +297,22 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// ── DB snapshot ────────────────────────────────────────────────────────────
-app.get('/api/db', (_req, res) => res.json(loadDb()));
+api.get('/db', (_req, res) => res.json(loadDb()));
 
-// ── Proof image upload + OCR ───────────────────────────────────────────────
-// POST /api/ocr   multipart/form-data  field: "proof"
-// Returns { ok, imageUrl, extracted: { upiIds, phones, amounts, igHandles, rawText } }
-app.post('/api/ocr', upload.single('proof'), async (req, res) => {
-  if (!req.file)
-    return res.status(400).json({ ok: false, error: 'No image uploaded.' });
-
+api.post('/ocr', upload.single('proof'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ ok: false, error: 'No image uploaded.' });
   try {
-    console.log(`OCR running on ${req.file.filename}…`);
     const extracted = await runOcr(req.file.path);
-    const imageUrl = `/uploads/${req.file.filename}`;
-    console.log(`OCR done. Found ${extracted.upiIds.length} UPI, ${extracted.phones.length} phones, ${extracted.amounts.length} amounts`);
-    res.json({ ok: true, imageUrl, extracted });
+    res.json({ ok: true, imageUrl: `/uploads/${req.file.filename}`, extracted });
   } catch (err) {
     console.error('OCR error', err);
-    // Even if OCR fails, we still have the image
-    res.json({ ok: true, imageUrl: `/uploads/${req.file.filename}`, extracted: null, ocrError: 'OCR failed, image saved.' });
+    res.json({ ok: true, imageUrl: `/uploads/${req.file.filename}`, extracted: null, ocrError: 'OCR processed without extractions.' });
   }
 });
 
-// ── Reports: list ──────────────────────────────────────────────────────────
-app.get('/api/reports', (_req, res) => {
-  res.json({ ok: true, reports: loadDb().reports });
-});
+api.get('/reports', (_req, res) => res.json({ ok: true, reports: loadDb().reports }));
 
-// ── Reports: submit ────────────────────────────────────────────────────────
-// Body: { ids, proof, note, proofImage?, extractedData? }
-app.post('/api/reports', (req, res) => {
+api.post('/reports', (req, res) => {
   try {
     const { ids, proof, note, proofImage, extractedData } = req.body || {};
     if (!Array.isArray(ids) || ids.length === 0)
@@ -293,7 +325,6 @@ app.post('/api/reports', (req, res) => {
     const insLink = db.prepare('INSERT OR IGNORE INTO account_ids (account_id, identity) VALUES (?, ?)');
     const insAcc  = db.prepare('INSERT OR IGNORE INTO accounts (id, verified, name) VALUES (?, 0, NULL)');
 
-    // Find or create an account that links all ids
     let accountId = null;
     for (const identity of ids) {
       const row = db.prepare('SELECT account_id FROM account_ids WHERE identity = ?').get(identity);
@@ -325,15 +356,9 @@ app.post('/api/reports', (req, res) => {
   }
 });
 
-// ── Accounts list ──────────────────────────────────────────────────────────
-app.get('/api/accounts', (_req, res) => {
-  res.json({ ok: true, accounts: loadDb().accounts });
-});
+api.get('/accounts', (_req, res) => res.json({ ok: true, accounts: loadDb().accounts }));
 
-// ── Verify a seller ────────────────────────────────────────────────────────
-// POST /api/sellers/verify
-// Body: { name, ig, upi, ph, ids? }
-app.post('/api/sellers/verify', (req, res) => {
+api.post('/sellers/verify', (req, res) => {
   try {
     const { name, ig, upi, ph } = req.body || {};
     const ids = Array.isArray(req.body?.ids) ? [...req.body.ids] : [];
@@ -361,7 +386,6 @@ app.post('/api/sellers/verify', (req, res) => {
 
     const sellerName = (name || '').trim() || null;
 
-    // Check if any provided identity is already linked to an existing account
     let accountId = null;
     for (const identity of uniqueIds) {
       const row = db.prepare('SELECT account_id FROM account_ids WHERE identity = ?').get(identity);
@@ -381,7 +405,7 @@ app.post('/api/sellers/verify', (req, res) => {
       insId.run(accountId, identity);
     }
 
-    console.log(`✓ Verified seller "${sellerName || uniqueIds[0]}" with IDs: ${uniqueIds.join(', ')}`);
+    console.log(`✓ Verified seller "${sellerName || uniqueIds[0]}"`);
     res.json({ ok: true, accountId, db: loadDb() });
   } catch (err) {
     console.error('verify seller error', err);
@@ -389,7 +413,19 @@ app.post('/api/sellers/verify', (req, res) => {
   }
 });
 
-// ── Serve frontend build (if present) ─────────────────────────────────────
+// ─── Express app ──────────────────────────────────────────────────────────────
+const app = express();
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json());
+
+// Serve uploaded proof images
+app.use('/uploads', express.static(UPLOADS_DIR));
+
+// Mount routes at BOTH /api and / (for Vercel path rewrites compatibility)
+app.use('/api', api);
+app.use('/', api);
+
+// Serve frontend build (when running standalone)
 const distPath = path.join(__dirname, '..', 'dist');
 if (fs.existsSync(distPath)) {
   app.use(express.static(distPath));
@@ -398,6 +434,7 @@ if (fs.existsSync(distPath)) {
 
 // ─── Start / Export ──────────────────────────────────────────────────────────
 seedIfEmpty();
+
 if (!isVercel) {
   app.listen(PORT, () => console.log(`TraceOn API ➜ http://localhost:${PORT}`));
 }

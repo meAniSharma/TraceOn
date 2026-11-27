@@ -1,6 +1,6 @@
 @echo off
-echo Starting TraceOn Backend...
-start "TraceOn API" node --experimental-sqlite "%~dp0server\index.js"
-echo Starting TraceOn Frontend...
-cd "%~dp0traceon"
+echo ==============================================
+echo  Starting TraceOn (Backend :3001 + Frontend :5173)
+echo ==============================================
+cd /d "%~dp0"
 npm run dev
